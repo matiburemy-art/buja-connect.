@@ -3,16 +3,16 @@ import { useState, useEffect, useRef } from "react";
 
 type UserAcc = { name: string; number: string; password: string; online: boolean; };
 type Msg = { id: string; text?: string; audioUrl?: string; time: string; me: boolean; status: "sent" | "delivered" | "read"; };
-type Contact = { id: string; name: string; number: string; online: boolean; exists: boolean; messages: Msg[]; };
+type Contact = { id: string; name: string; number: string; rawNumber: string; online: boolean; exists: boolean; messages: Msg[]; };
+
+// FONCTION QUI RÉPARE LE BUG
+const normalize = (num: string) => num.replace(/\D/g, "").slice(-8); // garde les 8 derniers chiffres
 
 export default function Page() {
-  // AUTH
   const [users, setUsers] = useState<UserAcc[]>([]);
   const [currentUser, setCurrentUser] = useState<UserAcc | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [aName, setAName] = useState(""); const [aNumber, setANumber] = useState(""); const [aPass, setAPass] = useState("");
-
-  // APP
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("Toutes");
@@ -25,38 +25,44 @@ export default function Page() {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const u = localStorage.getItem("buja_users"); if (u) setUsers(JSON.parse(u));
-    const cu = localStorage.getItem("buja_current"); if (cu) setCurrentUser(JSON.parse(cu));
-    const c = localStorage.getItem("buja_contacts"); if (c) setContacts(JSON.parse(c));
+    const u = localStorage.getItem("buja_users_v5"); if (u) setUsers(JSON.parse(u));
+    const cu = localStorage.getItem("buja_current_v5"); if (cu) setCurrentUser(JSON.parse(cu));
+    const c = localStorage.getItem("buja_contacts_v5"); if (c) setContacts(JSON.parse(c));
   }, []);
-  useEffect(() => { localStorage.setItem("buja_users", JSON.stringify(users)); }, [users]);
-  useEffect(() => { if(currentUser) localStorage.setItem("buja_current", JSON.stringify(currentUser)); }, [currentUser]);
-  useEffect(() => { localStorage.setItem("buja_contacts", JSON.stringify(contacts)); }, [contacts]);
+  useEffect(() => { localStorage.setItem("buja_users_v5", JSON.stringify(users)); }, [users]);
+  useEffect(() => { if(currentUser) localStorage.setItem("buja_current_v5", JSON.stringify(currentUser)); }, [currentUser]);
+  useEffect(() => { localStorage.setItem("buja_contacts_v5", JSON.stringify(contacts)); }, [contacts]);
   useEffect(() => { endRef.current?.scrollIntoView({behavior:"smooth"}); }, [contacts, selectedId]);
+  
+  // CORRECTION: met à jour automatiquement online/exists quand un user se connecte/déconnecte
+  useEffect(() => {
+    setContacts(prev => prev.map(contact => {
+      const match = users.find(u => normalize(u.number) === normalize(contact.rawNumber));
+      return { ...contact, exists: !!match, online: match?.online || false };
+    }));
+  }, [users]);
 
-  // AUTH LOGIC
   const handleSignup = () => {
     if (!aName.trim() || !aNumber.trim() || !aPass.trim()) return alert("Remplis tout");
-    if (users.find(x=>x.number===aNumber)) return alert("Ce numéro a déjà un compte");
+    if (users.find(x=>normalize(x.number)===normalize(aNumber))) return alert("Ce numéro a déjà un compte");
     const nu: UserAcc = { name: aName, number: aNumber, password: aPass, online: true };
     setUsers([...users, nu]); setCurrentUser(nu); setAName(""); setANumber(""); setAPass("");
   };
   const handleLogin = () => {
-    const found = users.find(x=>x.number===aNumber && x.password===aPass);
+    const found = users.find(x=>normalize(x.number)===normalize(aNumber) && x.password===aPass);
     if (!found) return alert("Numéro ou mot de passe incorrect");
-    const upd = {...found, online: true}; setUsers(users.map(x=>x.number===found.number?upd:x)); setCurrentUser(upd);
+    const upd = {...found, online: true}; setUsers(users.map(x=>normalize(x.number)===normalize(found.number)?upd:x)); setCurrentUser(upd);
   };
-  const logout = () => { if(currentUser){ setUsers(users.map(x=>x.number===currentUser.number?{...x, online:false}:x)); } setCurrentUser(null); localStorage.removeItem("buja_current"); };
+  const logout = () => { if(currentUser){ setUsers(users.map(x=>normalize(x.number)===normalize(currentUser.number)?{...x, online:false}:x)); } setCurrentUser(null); localStorage.removeItem("buja_current_v5"); };
 
-  // CONTACTS LOGIC - VRAIE VERIFICATION
   const addContact = () => {
     if (!newName.trim() || !newNumber.trim()) return;
-    const existsInBuja = users.some(u=>u.number===newNumber);
-    const targetUser = users.find(u=>u.number===newNumber);
+    const targetUser = users.find(u=>normalize(u.number)===normalize(newNumber));
+    const existsInBuja = !!targetUser;
     const c: Contact = {
-      id: Date.now().toString(), name: newName, number: newNumber,
+      id: Date.now().toString(), name: newName, number: newNumber, rawNumber: newNumber,
       online: targetUser?.online || false, exists: existsInBuja,
-      messages: [{ id:"0", text: existsInBuja ? `✅ ${newName} est sur Buja Connect` : `❌ ${newNumber} n'est pas enregistré sur Buja Connect - Invite-le !`, time:"09:00", me:false, status:"read" }]
+      messages: [{ id:"0", text: existsInBuja ? `✅ ${newName} est sur Buja Connect` : `❌ ${newNumber} n'est pas enregistré sur Buja Connect`, time:"09:00", me:false, status:"read" }]
     };
     setContacts([c, ...contacts]); setNewName(""); setNewNumber(""); setShowAdd(false);
   };
@@ -71,7 +77,6 @@ export default function Page() {
         const blob = new Blob(chunksRef.current,{type:"audio/ogg; codecs=opus"}); const url=URL.createObjectURL(blob);
         const sel = contacts.find(c=>c.id===selectedId);
         if(url && sel){
-          // Status depend de online
           const st: Msg["status"] = sel.online ? "delivered" : "sent";
           const nm: Msg={id:Date.now().toString(), audioUrl:url, time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}), me:true, status:st};
           setContacts(prev=>prev.map(c=>c.id===sel.id?{...c,messages:[...c.messages,nm]}:c));
@@ -83,28 +88,23 @@ export default function Page() {
   };
   const stopRecording=()=>{mediaRecorderRef.current?.stop(); setIsRecording(false); if(timerRef.current) clearInterval(timerRef.current);};
   const cancelRecording=()=>{mediaRecorderRef.current?.stop(); chunksRef.current=[]; setIsRecording(false); setRecTime(0); if(timerRef.current) clearInterval(timerRef.current);};
-
   const sendText=()=>{
     if(!inputText.trim() || !selected) return;
-    // 1 gris si hors ligne, 2 gris si en ligne
     const initialStatus: Msg["status"] = selected.online ? "delivered" : "sent";
     const nm: Msg={id:Date.now().toString(), text:inputText, time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}), me:true, status:initialStatus};
     const selId=selected.id;
     setContacts(prev=>prev.map(c=>c.id===selId?{...c,messages:[...c.messages,nm]}:c));
     setInputText("");
   };
-
-  // Simuler lecture : quand on clique sur contact, ses messages passent en read
   const markAsRead = (contactId: string) => {
     setSelectedId(contactId);
-    setContacts(prev=>prev.map(c=>c.id===contactId?{...c, messages:c.messages.map(m=>!m.me?{...m, status:"read"}:m)}:c));
+    setContacts(prev=>prev.map(c=>c.id===contactId?{...c, messages:c.messages.map(m=>!m.me?{...m, status:"read"} as Msg:m)}:c));
   };
 
   const selected = contacts.find(c=>c.id===selectedId);
   let filtered = contacts.filter(c=> c.name.toLowerCase().includes(search.toLowerCase()) || c.number.includes(search));
   if(filter==="Non lues") filtered=filtered.filter(c=>c.messages.some(m=>!m.me && m.status!=="read"));
 
-  // ECRAN LOGIN/SIGNUP
   if (!currentUser) {
     return (
       <div style={{height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#f0f2f5", fontFamily:"Segoe UI, sans-serif"}}>
@@ -115,17 +115,16 @@ export default function Page() {
             <p style={{color:"#667781", fontSize:"13px", margin:0}}>{authMode==="login" ? "Connecte-toi" : "Crée ton compte"}</p>
           </div>
           {authMode==="signup" && <input value={aName} onChange={e=>setAName(e.target.value)} placeholder="Nom complet" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"12px"}}/>}
-          <input value={aNumber} onChange={e=>setANumber(e.target.value)} placeholder="Numéro ex: 79123456" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"12px"}}/>
+          <input value={aNumber} onChange={e=>setANumber(e.target.value)} placeholder="Numéro ex: 66465801 ou +25766465801" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"12px"}}/>
           <input type="password" value={aPass} onChange={e=>setAPass(e.target.value)} placeholder="Mot de passe" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"16px"}}/>
           <button onClick={authMode==="login"?handleLogin:handleSignup} style={{width:"100%", background:"#25D366", color:"white", border:"none", borderRadius:"8px", padding:"12px", fontWeight:600, cursor:"pointer"}}>{authMode==="login"?"Se connecter":"Créer le compte"}</button>
           <p style={{textAlign:"center", fontSize:"13px", marginTop:"16px"}}>{authMode==="login"?"Pas de compte?":"Déjà un compte?"} <span onClick={()=>setAuthMode(authMode==="login"?"signup":"login")} style={{color:"#25D366", cursor:"pointer", fontWeight:600}}>{authMode==="login"?"S'inscrire":"Se connecter"}</span></p>
-          {users.length>0 && <div style={{marginTop:"16px", fontSize:"11px", color:"#667781", background:"#f0f2f5", padding:"8px", borderRadius:"6px"}}>Comptes existants (test): {users.map(u=>u.number).join(", ")}</div>}
+          {users.length>0 && <div style={{marginTop:"16px", fontSize:"11px", color:"#667781", background:"#f0f2f5", padding:"8px", borderRadius:"6px"}}>Comptes existants: {users.map(u=>`${u.name}:${u.number}`).join(", ")}</div>}
         </div>
       </div>
     );
   }
 
-  // INTERFACE PRINCIPALE
   return (
     <div style={{display:"flex", height:"100vh", fontFamily:"Segoe UI, sans-serif", background:"#f0f2f5"}}>
       <div style={{width:"64px", background:"#f0f2f5", borderRight:"1px solid #e9edef", display:"flex", flexDirection:"column", alignItems:"center", paddingTop:"12px"}}>
@@ -134,7 +133,7 @@ export default function Page() {
       </div>
       <div style={{width:"360px", background:"white", display:"flex", flexDirection:"column"}}>
         <div style={{height:"59px", padding:"0 16px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
-          <div><div style={{fontWeight:800, fontSize:"18px"}}>Buja Connect</div><div style={{fontSize:"12px", color:"#25D366"}}>{currentUser.name} • {currentUser.number}</div></div>
+          <div><div style={{fontWeight:800, fontSize:"18px"}}>Buja Connect</div><div style={{fontSize:"12px", color:"#25D366"}}>{currentUser.name}</div></div>
           <button onClick={()=>setShowAdd(true)} style={{width:"30px", height:"30px", borderRadius:"6px", border:"1px solid #e9edef", background:"white", cursor:"pointer"}}>+</button>
         </div>
         <div style={{padding:"8px 12px"}}>
@@ -210,9 +209,8 @@ export default function Page() {
         <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:99}}>
           <div style={{background:"white", borderRadius:"12px", padding:"24px", width:"360px"}}>
             <h3 style={{margin:"0 0 16px 0"}}>Nouveau contact</h3>
-            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nom" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"12px"}}/>
-            <input value={newNumber} onChange={e=>setNewNumber(e.target.value)} placeholder="Numéro (même numéro que son compte Buja)" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"8px"}}/>
-            <p style={{fontSize:"11px", color:"#667781", margin:"0 0 12px 0"}}>On vérifie si {newNumber || "ce numéro"} a déjà un compte Buja Connect</p>
+            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nom ex: YVES" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"12px"}}/>
+            <input value={newNumber} onChange={e=>setNewNumber(e.target.value)} placeholder="Numéro 66465801 ou +25766465801" style={{width:"100%", boxSizing:"border-box", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"16px"}}/>
             <div style={{display:"flex", justifyContent:"flex-end", gap:"8px"}}>
               <button onClick={()=>setShowAdd(false)} style={{padding:"8px 16px", border:"none", background:"transparent", cursor:"pointer"}}>Annuler</button>
               <button onClick={addContact} style={{padding:"8px 20px", border:"none", background:"#25D366", color:"white", borderRadius:"20px", cursor:"pointer"}}>Ajouter</button>
