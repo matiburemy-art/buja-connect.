@@ -1,168 +1,104 @@
 "use client";
 import { useState, useEffect } from "react";
 
-type Contact = {
-  id: string;
-  name: string;
-  lastMessage: string;
-  time: string;
-  unread?: number;
-};
+type Contact = { id: string; name: string; lastMessage: string; time: string; };
 
 export default function Page() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("Toutes");
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newMsg, setNewMsg] = useState("");
 
-  // Charger depuis localStorage
   useEffect(() => {
-    const saved = localStorage.getItem("buja_contacts");
-    if (saved) setContacts(JSON.parse(saved));
+    const s = localStorage.getItem("buja_contacts_v2");
+    if (s) setContacts(JSON.parse(s));
   }, []);
-
   useEffect(() => {
-    localStorage.setItem("buja_contacts", JSON.stringify(contacts));
+    localStorage.setItem("buja_contacts_v2", JSON.stringify(contacts));
   }, [contacts]);
 
   const addContact = () => {
     if (!newName.trim()) return;
-    const c: Contact = {
-      id: Date.now().toString(),
-      name: newName,
-      lastMessage: newMsg || "Nouveau contact ajouté",
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
+    const c: Contact = { id: Date.now().toString(), name: newName, lastMessage: newMsg || "Nouveau contact", time: new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) };
     setContacts([c, ...contacts]);
     setNewName(""); setNewMsg(""); setShowAdd(false);
   };
 
-  const filtered = contacts.filter(c => 
-    c.name.toLowerCase().includes(search.toLowerCase())
-  );
-
   const selected = contacts.find(c => c.id === selectedId);
+  const filtered = contacts.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="h-screen flex bg-[#f0f2f5] font-sans">
+    <div style={{display:"flex", height:"100vh", fontFamily:"Segoe UI, Helvetica, Arial, sans-serif", background:"#f0f2f5"}}>
       {/* LEFT */}
-      <div className="w-[420px] bg-white border-r border-[#e9edef] flex flex-col">
-        {/* Header */}
-        <div className="h-[59px] px-4 flex items-center justify-between bg-white">
-          <h1 className="text-[#25D366] font-bold text-[22px] tracking-tight">WhatsApp</h1>
-          <div className="flex gap-3 items-center">
-            <button className="w-9 h-9 bg-[#25D366] rounded-full flex items-center justify-center text-white text-xl">+</button>
+      <div style={{width:"420px", background:"white", borderRight:"1px solid #e9edef", display:"flex", flexDirection:"column"}}>
+        <div style={{height:"59px", padding:"0 16px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+          <h1 style={{color:"#25D366", fontWeight:800, fontSize:"22px", margin:0}}>WhatsApp</h1>
+          <button onClick={()=>setShowAdd(true)} style={{width:"36px", height:"36px", background:"#25D366", borderRadius:"50%", border:"none", color:"white", fontSize:"22px", cursor:"pointer"}}>+</button>
+        </div>
+
+        <div style={{padding:"8px 12px"}}>
+          <div style={{background:"#f0f2f5", borderRadius:"8px", display:"flex", alignItems:"center", padding:"0 12px", height:"36px"}}>
+            <span style={{color:"#54656f", marginRight:"16px"}}>⌕</span>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher ou démarrer une discussion" style={{background:"transparent", border:"none", outline:"none", width:"100%", fontSize:"14px"}}/>
           </div>
         </div>
 
-        {/* Search */}
-        <div className="px-3 py-2">
-          <div className="bg-[#f0f2f5] rounded-lg flex items-center px-3 h-9">
-            <span className="text-[#54656f] mr-6">⌕</span>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Rechercher ou démarrer une discussion"
-              className="bg-transparent w-full outline-none text-[14px] placeholder:text-[#667781]"
-            />
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="flex gap-2 px-3 py-2 overflow-x-auto">
-          {["Toutes", "Non lues", "Favoris", "Groupes"].map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-full text-[13px] whitespace-nowrap border ${
-                filter === f ? "bg-[#e7fce3] text-[#008069] border-[#e7fce3]" : "bg-white text-[#54656f] border-[#e9edef]"
-              }`}
-            >
-              {f === "Non lues" && contacts.length > 0 ? `${f} ${contacts.length}` : f === "Groupes" ? `${f} 0` : f}
-            </button>
+        <div style={{display:"flex", gap:"8px", padding:"8px 12px"}}>
+          {["Toutes","Non lues","Favoris","Groupes"].map(f=>(
+            <span key={f} style={{padding:"6px 12px", borderRadius:"20px", fontSize:"13px", background: f==="Toutes"?"#e7fce3":"#f0f2f5", color: f==="Toutes"?"#008069":"#54656f"}}>{f}</span>
           ))}
-          <button onClick={() => setShowAdd(true)} className="w-7 h-7 border rounded-full flex items-center justify-center text-[#54656f]">+</button>
         </div>
 
-        {/* List */}
-        <div className="flex-1 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <div className="p-10 text-center text-[#667781] text-[14px]">
-              {contacts.length === 0 ? (
-                <>
-                  <p>Aucune discussion</p>
-                  <button onClick={() => setShowAdd(true)} className="mt-3 text-[#25D366] font-medium">+ Ajouter un contact</button>
-                </>
-              ) : "Aucun résultat"}
+        <div style={{flex:1, overflowY:"auto"}}>
+          {filtered.length===0 ? (
+            <div style={{textAlign:"center", marginTop:"80px", color:"#667781"}}>
+              <div style={{fontSize:"60px"}}>💬</div>
+              <p style={{marginTop:"12px"}}>Aucune discussion</p>
+              <button onClick={()=>setShowAdd(true)} style={{marginTop:"16px", background:"#25D366", color:"white", border:"none", padding:"10px 20px", borderRadius:"24px", cursor:"pointer", fontWeight:600}}>+ Ajouter un contact</button>
             </div>
-          ) : (
-            filtered.map(c => (
-              <div
-                key={c.id}
-                onClick={() => setSelectedId(c.id)}
-                className={`flex gap-3 px-3 py-3 hover:bg-[#f5f6f6] cursor-pointer ${selectedId === c.id ? "bg-[#f0f2f5]" : ""}`}
-              >
-                <div className="w-12 h-12 rounded-full bg-[#dfe5e7] flex items-center justify-center font-bold text-[#54656f] shrink-0">
-                  {c.name[0]?.toUpperCase()}
-                </div>
-                <div className="flex-1 border-b border-[#e9edef] pb-3">
-                  <div className="flex justify-between">
-                    <p className="font-medium text-[16px] text-[#111b21]">{c.name}</p>
-                    <span className="text-[12px] text-[#667781]">{c.time}</span>
-                  </div>
-                  <p className="text-[14px] text-[#667781] truncate">✓ {c.lastMessage}</p>
-                </div>
+          ) : filtered.map(c=>(
+            <div key={c.id} onClick={()=>setSelectedId(c.id)} style={{display:"flex", gap:"12px", padding:"12px", cursor:"pointer", background: selectedId===c.id?"#f0f2f5":"white"}}>
+              <div style={{width:"49px", height:"49px", borderRadius:"50%", background:"#dfe5e7", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:"bold", color:"#54656f"}}>{c.name[0].toUpperCase()}</div>
+              <div style={{flex:1, borderBottom:"1px solid #e9edef", paddingBottom:"12px"}}>
+                <div style={{display:"flex", justifyContent:"space-between"}}><b style={{color:"#111b21"}}>{c.name}</b><span style={{fontSize:"12px", color:"#667781"}}>{c.time}</span></div>
+                <div style={{fontSize:"14px", color:"#667781", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{c.lastMessage}</div>
               </div>
-            ))
-          )}
+            </div>
+          ))}
         </div>
       </div>
 
       {/* RIGHT */}
-      <div className="flex-1 flex flex-col bg-[#efeae2] relative">
-        {/* WhatsApp wallpaper */}
-        <div className="absolute inset-0 opacity-40" style={{backgroundImage: `url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')`}}></div>
-        
+      <div style={{flex:1, background:"#efeae2", display:"flex", flexDirection:"column", position:"relative"}}>
         {selected ? (
           <>
-            <div className="h-[59px] bg-[#f0f2f5] border-l border-[#e9edef] flex items-center px-4 gap-3 z-10">
-              <div className="w-10 h-10 rounded-full bg-[#dfe5e7] flex items-center justify-center font-bold">{selected.name[0].toUpperCase()}</div>
-              <div><p className="font-semibold text-[#111b21]">{selected.name}</p><p className="text-[13px] text-[#667781]">en ligne</p></div>
+            <div style={{height:"59px", background:"#f0f2f5", display:"flex", alignItems:"center", padding:"0 16px", gap:"12px"}}>
+              <div style={{width:"40px", height:"40px", borderRadius:"50%", background:"#dfe5e7", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:"bold"}}>{selected.name[0].toUpperCase()}</div>
+              <b>{selected.name}</b>
             </div>
-            <div className="flex-1 z-10 p-6 flex items-end">
-              <div className="bg-white rounded-lg p-3 shadow text-[14px] max-w-[60%]">
-                {selected.lastMessage}
-                <span className="text-[11px] text-[#667781] ml-2">{selected.time}</span>
-              </div>
-            </div>
-            <div className="h-[62px] bg-[#f0f2f5] flex items-center px-4 gap-3 z-10">
-              <input placeholder="Entrez un message" className="flex-1 h-10 rounded-lg px-4 outline-none text-[14px]" />
-            </div>
+            <div style={{flex:1, padding:"20px"}}><span style={{background:"white", padding:"8px 12px", borderRadius:"8px", boxShadow:"0 1px 0.5px rgba(0,0,0,0.13)"}}>{selected.lastMessage}</span></div>
+            <div style={{height:"62px", background:"#f0f2f5", display:"flex", alignItems:"center", padding:"0 16px"}}><input placeholder="Entrez un message" style={{flex:1, height:"42px", borderRadius:"8px", border:"none", padding:"0 12px", outline:"none"}}/></div>
           </>
         ) : (
-          <div className="flex-1 z-10 flex items-center justify-center">
-            <div className="text-center">
-              <h2 className="text-[32px] font-light text-[#41525d]">WhatsApp Web</h2>
-              <p className="text-[#667781] text-[14px] mt-2">Sélectionne une discussion ou ajoute un contact</p>
-              <button onClick={() => setShowAdd(true)} className="mt-6 bg-[#25D366] text-white px-6 py-2 rounded-full text-[14px]">+ Nouveau contact</button>
-            </div>
+          <div style={{flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", color:"#41525d"}}>
+            <h2 style={{fontSize:"32px", fontWeight:300}}>WhatsApp Web</h2>
+            <p style={{color:"#667781", fontSize:"14px", marginTop:"8px"}}>Sélectionne une discussion ou ajoute un contact</p>
+            <button onClick={()=>setShowAdd(true)} style={{marginTop:"24px", background:"#25D366", color:"white", border:"none", padding:"10px 24px", borderRadius:"24px", cursor:"pointer"}}>+ Nouveau contact</button>
           </div>
         )}
       </div>
 
-      {/* MODAL ADD */}
       {showAdd && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-[360px]">
-            <h3 className="font-bold text-[18px] mb-4">Ajouter contact</h3>
-            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nom / Numéro" className="w-full border rounded-lg p-3 mb-3 outline-none" />
-            <input value={newMsg} onChange={e => setNewMsg(e.target.value)} placeholder="Dernier message" className="w-full border rounded-lg p-3 mb-4 outline-none" />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-[#667781]">Annuler</button>
-              <button onClick={addContact} className="px-5 py-2 bg-[#25D366] text-white rounded-full">Ajouter</button>
+        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:50}}>
+          <div style={{background:"white", borderRadius:"8px", padding:"24px", width:"360px"}}>
+            <h3 style={{margin:"0 0 16px 0"}}>Ajouter contact</h3>
+            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nom / Numéro" style={{width:"100%", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"12px"}}/>
+            <input value={newMsg} onChange={e=>setNewMsg(e.target.value)} placeholder="Dernier message" style={{width:"100%", border:"1px solid #e9edef", borderRadius:"8px", padding:"12px", marginBottom:"16px"}}/>
+            <div style={{display:"flex", justifyContent:"flex-end", gap:"8px"}}>
+              <button onClick={()=>setShowAdd(false)} style={{padding:"8px 16px", border:"none", background:"transparent", color:"#667781", cursor:"pointer"}}>Annuler</button>
+              <button onClick={addContact} style={{padding:"8px 20px", border:"none", background:"#25D366", color:"white", borderRadius:"24px", cursor:"pointer"}}>Ajouter</button>
             </div>
           </div>
         </div>
