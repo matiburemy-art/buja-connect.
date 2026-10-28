@@ -1,112 +1,170 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null as any;
+
 type UserAcc = { name: string; number: string; password: string; online: boolean; };
 type Msg = { id: string; text?: string; audioUrl?: string; time: string; me: boolean; status: "sent" | "delivered" | "read"; };
-type Contact = { id: string; name: string; number: string; rawNumber: string; online: boolean; exists: boolean; messages: Msg[]; };
-const normalize = (num: string) => num.replace(/\D/g, "").slice(-8);
+type Contact = { id: string; name: string; number: string; online: boolean; exists: boolean; messages: Msg[]; };
+type Status = { id: string; user_number: string; user_name: string; text?: string; image_url?: string; created_at: string; };
+
+const normalize = (n: string) => n.replace(/\D/g, "").slice(-8);
 
 export default function Page() {
   const [users, setUsers] = useState<UserAcc[]>([]);
   const [currentUser, setCurrentUser] = useState<UserAcc | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authMode, setAuthMode] = useState<"login"|"signup">("login");
   const [aName, setAName] = useState(""); const [aNumber, setANumber] = useState(""); const [aPass, setAPass] = useState("");
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tab, setTab] = useState<"disc" | "actu" | "comm" | "appels">("disc");
   const [search, setSearch] = useState(""); const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState(""); const [newNumber, setNewNumber] = useState("");
-  const [inputText, setInputText] = useState(""); const [isRecording, setIsRecording] = useState(false); const [recTime, setRecTime] = useState(0);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null); const chunksRef = useRef<Blob[]>([]); const timerRef = useRef<any>(null); const endRef = useRef<HTMLDivElement>(null);
+  const [inputText, setInputText] = useState("");
+  const [statuses, setStatuses] = useState<Status[]>([]);
+  const [showStatusAdd, setShowStatusAdd] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [viewStatus, setViewStatus] = useState<Status | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const u = localStorage.getItem("buja_users_v6"); if (u) setUsers(JSON.parse(u));
-    const cu = localStorage.getItem("buja_current_v6"); if (cu) setCurrentUser(JSON.parse(cu));
-    const c = localStorage.getItem("buja_contacts_v6"); if (c) setContacts(JSON.parse(c));
-  }, []);
-  useEffect(() => { localStorage.setItem("buja_users_v6", JSON.stringify(users)); }, [users]);
-  useEffect(() => { if(currentUser) localStorage.setItem("buja_current_v6", JSON.stringify(currentUser)); }, [currentUser]);
-  useEffect(() => { localStorage.setItem("buja_contacts_v6", JSON.stringify(contacts)); }, [contacts]);
+  const loadUsers = async () => {
+    if(!supabase) { const u = localStorage.getItem("buja_users_backup"); if(u) setUsers(JSON.parse(u)); return; }
+    const { data } = await supabase.from("users").select("*"); 
+    if(data) setUsers(data as any);
+  };
+  const loadStatuses = async () => {
+    if(!supabase) return;
+    const { data } = await supabase.from("statuses").select("*").order("created_at", {ascending:false}); 
+    if(data) setStatuses(data);
+  };
+
+  useEffect(() => { loadUsers(); loadStatuses(); const c = localStorage.getItem("buja_contacts_v7"); if(c) setContacts(JSON.parse(c)); const cu = localStorage.getItem("buja_current_v7"); if(cu) setCurrentUser(JSON.parse(cu)); }, []);
+  useEffect(() => { localStorage.setItem("buja_contacts_v7", JSON.stringify(contacts)); }, [contacts]);
   useEffect(() => { endRef.current?.scrollIntoView({behavior:"smooth"}); }, [contacts, selectedId]);
-  useEffect(() => { setContacts(prev => prev.map(contact => { const match = users.find(u => normalize(u.number) === normalize(contact.rawNumber)); return { ...contact, exists: !!match, online: match?.online || false }; })); }, [users]);
 
-  const handleSignup = () => {
-    if (!aName.trim() || !aNumber.trim() || !aPass.trim()) return alert("Remplis tout");
-    if (users.find(x=>normalize(x.number)===normalize(aNumber))) return alert("Ce numéro a déjà un compte");
-    const nu: UserAcc = { name: aName, number: aNumber, password: aPass, online: true };
-    setUsers([...users, nu]); setCurrentUser(nu); setAName(""); setANumber(""); setAPass("");
+  const handleSignup = async () => {
+    if(!aName||!aNumber||!aPass) return alert("Remplis tout");
+    if(!supabase){
+      const nu = {name:aName, number:aNumber, password:aPass, online:true};
+      const all = [...users, nu]; setUsers(all); localStorage.setItem("buja_users_backup", JSON.stringify(all));
+      setCurrentUser(nu); localStorage.setItem("buja_current_v7", JSON.stringify(nu)); return;
+    }
+    const { error } = await supabase.from("users").insert([{name:aName, number:aNumber, password:aPass, online:true}]);
+    if(error) return alert("Numéro déjà utilisé: "+error.message);
+    const nu = {name:aName, number:aNumber, password:aPass, online:true}; setCurrentUser(nu); localStorage.setItem("buja_current_v7", JSON.stringify(nu)); loadUsers();
   };
-  const handleLogin = () => {
-    const found = users.find(x=>normalize(x.number)===normalize(aNumber) && x.password===aPass);
-    if (!found) return alert("Numéro ou mot de passe incorrect - Comptes existants: "+users.map(u=>u.number).join(", "));
-    const upd = {...found, online: true}; setUsers(users.map(x=>normalize(x.number)===normalize(found.number)?upd:x)); setCurrentUser(upd);
+  const handleLogin = async () => {
+    if(!supabase){
+      const found = users.find(u=>normalize(u.number)===normalize(aNumber) && u.password===aPass);
+      if(!found) return alert("Faux - comptes locaux: "+users.map(u=>u.number).join(","));
+      setCurrentUser(found); localStorage.setItem("buja_current_v7", JSON.stringify(found)); return;
+    }
+    const { data } = await supabase.from("users").select("*").eq("number", aNumber).eq("password", aPass).single();
+    if(!data) return alert("Faux"); await supabase.from("users").update({online:true}).eq("number", aNumber);
+    setCurrentUser(data as any); localStorage.setItem("buja_current_v7", JSON.stringify(data)); loadUsers();
   };
-  const logout = () => { if(currentUser){ setUsers(users.map(x=>normalize(x.number)===normalize(currentUser.number)?{...x, online:false}:x)); } setCurrentUser(null); localStorage.removeItem("buja_current_v6"); };
-  const addContact = () => {
-    if (!newName.trim() || !newNumber.trim()) return;
-    const targetUser = users.find(u=>normalize(u.number)===normalize(newNumber));
-    const c: Contact = { id: Date.now().toString(), name: newName, number: newNumber, rawNumber: newNumber, online: targetUser?.online || false, exists: !!targetUser, messages: [{ id:"0", text: targetUser ? `✅ ${newName} est sur Buja Connect` : `❌ ${newNumber} n'est pas sur Buja Connect. Comptes existants sur ce navigateur: ${users.map(u=>u.number).join(", ")}`, time:"09:00", me:false, status:"read" }] };
-    setContacts([c, ...contacts]); setNewName(""); setNewNumber(""); setShowAdd(false);
+  const logout = async () => { 
+    if(supabase && currentUser) await supabase.from("users").update({online:false}).eq("number", currentUser.number); 
+    setCurrentUser(null); localStorage.removeItem("buja_current_v7"); 
   };
-  const formatTime = (s:number) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,"0")}`;
-  const startRecording = async () => {
-    try { const stream = await navigator.mediaDevices.getUserMedia({audio:true}); const mr = new MediaRecorder(stream); mediaRecorderRef.current=mr; chunksRef.current=[]; mr.ondataavailable=e=>{if(e.data.size>0) chunksRef.current.push(e.data);}; mr.onstop=()=>{ const blob = new Blob(chunksRef.current,{type:"audio/ogg; codecs=opus"}); const url=URL.createObjectURL(blob); const sel = contacts.find(c=>c.id===selectedId); if(url && sel){ const st: Msg["status"] = sel.online ? "delivered" : "sent"; const nm: Msg={id:Date.now().toString(), audioUrl:url, time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}), me:true, status:st}; setContacts(prev=>prev.map(c=>c.id===sel.id?{...c,messages:[...c.messages,nm]}:c)); } stream.getTracks().forEach(t=>t.stop()); }; mr.start(); setIsRecording(true); setRecTime(0); timerRef.current=setInterval(()=>setRecTime(t=>t+1),1000); } catch { alert("Autorise le micro"); }
+
+  const addContact = async () => {
+    if(!newName||!newNumber) return; await loadUsers();
+    const found = users.find(u=>normalize(u.number)===normalize(newNumber));
+    const exists = !!found;
+    const c: Contact = {id:Date.now().toString(), name:newName, number:newNumber, online:found?.online||false, exists, messages:[{id:"0", text: exists ? `✅ ${newName} est sur Buja Connect` : `❌ Pas sur Buja Connect`, time:"09:00", me:false, status:"read"}]};
+    setContacts([c, ...contacts]); setShowAdd(false); setNewName(""); setNewNumber("");
   };
-  const stopRecording=()=>{mediaRecorderRef.current?.stop(); setIsRecording(false); if(timerRef.current) clearInterval(timerRef.current);};
-  const cancelRecording=()=>{mediaRecorderRef.current?.stop(); chunksRef.current=[]; setIsRecording(false); setRecTime(0); if(timerRef.current) clearInterval(timerRef.current);};
-  const sendText=()=>{ if(!inputText.trim() || !selected) return; const nm: Msg={id:Date.now().toString(), text:inputText, time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}), me:true, status:selected.online?"delivered":"sent"}; const selId=selected.id; setContacts(prev=>prev.map(c=>c.id===selId?{...c,messages:[...c.messages,nm]}:c)); setInputText(""); };
-  const markAsRead = (contactId: string) => { setSelectedId(contactId); setContacts(prev=>prev.map(c=>c.id===contactId?{...c, messages:c.messages.map(m=>!m.me?{...m, status:"read"} as Msg:m)}:c)); };
+  const addStatus = async () => {
+    if(!statusText.trim() || !currentUser) return;
+    if(!supabase) return alert("Ajoute Supabase pour les statuts");
+    await supabase.from("statuses").insert([{user_number:currentUser.number, user_name:currentUser.name, text:statusText}]);
+    setStatusText(""); setShowStatusAdd(false); loadStatuses();
+  };
+  const sendText = () => {
+    if(!inputText.trim()||!selected) return;
+    const nm: Msg = {id:Date.now().toString(), text:inputText, time:new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}), me:true, status:selected.online?"delivered":"sent"};
+    setContacts(prev=>prev.map(c=>c.id===selected.id?{...c, messages:[...c.messages, nm]}:c)); setInputText("");
+  };
   const selected = contacts.find(c=>c.id===selectedId);
-  let filtered = contacts.filter(c=> c.name.toLowerCase().includes(search.toLowerCase()) || c.number.includes(search));
+  const filtered = contacts.filter(c=>c.name.toLowerCase().includes(search.toLowerCase()));
 
-  if (!currentUser) {
+  if(!currentUser){
     return (
-      <div style={{height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#f0f2f5", fontFamily:"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif"}}>
-        <div style={{background:"white", borderRadius:"12px", padding:"28px", width:"90%", maxWidth:"380px", boxShadow:"0 2px 10px rgba(0,0,0,0.1)"}}>
-          <div style={{textAlign:"center", marginBottom:"20px"}}>
-            <div style={{width:"64px", height:"64px", background:"#25D366", borderRadius:"16px", display:"inline-flex", alignItems:"center", justifyContent:"center", color:"white", fontSize:"28px", fontWeight:800}}>B</div>
-            <h1 style={{margin:"12px 0 4px 0", fontSize:"24px", color:"#111b21", fontWeight:700}}>Buja Connect</h1>
-            <p style={{color:"#111b21", fontSize:"14px", fontWeight:500, margin:0}}>{authMode==="login" ? "Connecte-toi" : "Crée ton compte"}</p>
-          </div>
-          {authMode==="signup" && <input value={aName} onChange={e=>setAName(e.target.value)} placeholder="Nom complet" style={{width:"100%", boxSizing:"border-box", border:"2px solid #e9edef", borderRadius:"8px", padding:"14px", marginBottom:"12px", fontSize:"16px", color:"#111b21"}}/>}
-          <input value={aNumber} onChange={e=>setANumber(e.target.value)} placeholder="Numéro 66465801" style={{width:"100%", boxSizing:"border-box", border:"2px solid #e9edef", borderRadius:"8px", padding:"14px", marginBottom:"12px", fontSize:"16px", color:"#111b21"}}/>
-          <input type="password" value={aPass} onChange={e=>setAPass(e.target.value)} placeholder="Mot de passe" style={{width:"100%", boxSizing:"border-box", border:"2px solid #e9edef", borderRadius:"8px", padding:"14px", marginBottom:"16px", fontSize:"16px", color:"#111b21"}}/>
-          <button onClick={authMode==="login"?handleLogin:handleSignup} style={{width:"100%", background:"#25D366", color:"white", border:"none", borderRadius:"8px", padding:"14px", fontWeight:700, fontSize:"16px", cursor:"pointer"}}>{authMode==="login"?"Se connecter":"Créer le compte"}</button>
-          <p style={{textAlign:"center", fontSize:"14px", marginTop:"16px", color:"#111b21"}}>{authMode==="login"?"Pas de compte?":"Déjà un compte?"} <span onClick={()=>setAuthMode(authMode==="login"?"signup":"login")} style={{color:"#25D366", cursor:"pointer", fontWeight:700}}>{authMode==="login"?"S'inscrire":"Se connecter"}</span></p>
-          <div style={{marginTop:"12px", fontSize:"12px", color:"#111b21", background:"#f0f2f5", padding:"10px", borderRadius:"8px", fontWeight:500}}>TEST: Comptes sur ce navigateur:<br/>{users.length===0?"Aucun compte":users.map(u=>`• ${u.name} - ${u.number} ${u.online?"(en ligne)":"(hors ligne)"}`).join("\n")}</div>
+      <div style={{height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#111b21"}}>
+        <div style={{background:"white", padding:28, borderRadius:16, width:360, fontFamily:"sans-serif"}}>
+          <div style={{textAlign:"center", marginBottom:16}}><div style={{width:56, height:56, background:"#25D366", borderRadius:12, display:"inline-flex", alignItems:"center", justifyContent:"center", color:"white", fontWeight:800, fontSize:24}}>B</div><h2 style={{margin:"8px 0"}}>Buja Connect</h2>{!supabase && <p style={{color:"#e11", fontSize:12, fontWeight:700}}>⚠️ Mode local - Ajoute tes clés Supabase dans .env.local</p>}</div>
+          {authMode==="signup" && <input value={aName} onChange={e=>setAName(e.target.value)} placeholder="Nom" style={{width:"100%", padding:12, marginBottom:10, borderRadius:8, border:"1px solid #ddd"}}/>}
+          <input value={aNumber} onChange={e=>setANumber(e.target.value)} placeholder="Numéro ex: 66465801" style={{width:"100%", padding:12, marginBottom:10, borderRadius:8, border:"1px solid #ddd"}}/>
+          <input type="password" value={aPass} onChange={e=>setAPass(e.target.value)} placeholder="Mot de passe" style={{width:"100%", padding:12, marginBottom:12, borderRadius:8, border:"1px solid #ddd"}}/>
+          <button onClick={authMode==="login"?handleLogin:handleSignup} style={{width:"100%", padding:12, background:"#25D366", color:"white", border:"none", borderRadius:8, fontWeight:700}}>{authMode==="login"?"Se connecter":"Créer compte"}</button>
+          <p style={{textAlign:"center", fontSize:13, marginTop:12, cursor:"pointer", color:"#25D366"}} onClick={()=>setAuthMode(authMode==="login"?"signup":"login")}>{authMode==="login"?"Pas de compte ? S'inscrire":"Déjà un compte ? Se connecter"}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={{display:"flex", height:"100vh", fontFamily:"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif", background:"#fff"}}>
-      <div style={{width:"400px", background:"white", display:"flex", flexDirection:"column", borderRight:"1px solid #e9edef"}}>
-        <div style={{height:"68px", padding:"0 16px", display:"flex", alignItems:"center", justifyContent:"space-between", background:"#f0f2f5"}}>
-          <div>
-            <div style={{fontWeight:800, fontSize:"19px", color:"#111b21"}}>Buja Connect</div>
-            {/* NUMÉRO TOUJOURS VISIBLE CORRIGÉ */}
-            <div style={{fontSize:"13px", color:"#008069", fontWeight:600}}>{currentUser.name} • {currentUser.number}</div>
-          </div>
-          <button onClick={()=>setShowAdd(true)} style={{width:"36px", height:"36px", borderRadius:"8px", border:"1px solid #d1d7db", background:"white", cursor:"pointer", fontSize:"18px", fontWeight:700}}>+</button>
+    <div style={{display:"flex", height:"100vh", fontFamily:"sans-serif", background:"#fff"}}>
+      <div style={{width:420, background:"white", display:"flex", flexDirection:"column", borderRight:"1px solid #e9edef"}}>
+        <div style={{height:59, background:"#f0f2f5", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 16px"}}>
+          <b style={{fontSize:19}}>Buja Connect {supabase ? "" : "(local)"}</b>
+          <div style={{display:"flex", gap:12}}><span style={{cursor:"pointer"}} onClick={()=>setShowAdd(true)}>＋</span><span style={{cursor:"pointer", fontSize:12}} onClick={logout}>Déco</span></div>
         </div>
-        <div style={{padding:"8px 12px"}}>
-          <div style={{background:"#f0f2f5", borderRadius:"8px", display:"flex", alignItems:"center", padding:"0 12px", height:"40px"}}>
-            <span style={{marginRight:"10px", fontSize:"16px"}}>⌕</span>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher" style={{background:"transparent", border:"none", outline:"none", width:"100%", fontSize:"15px", color:"#111b21"}}/>
-          </div>
-        </div>
-        <div style={{flex:1, overflowY:"auto"}}>
-          {filtered.map(c=>(
-            <div key={c.id} onClick={()=>markAsRead(c.id)} style={{display:"flex", gap:"12px", padding:"12px 16px", cursor:"pointer", background:selectedId===c.id?"#f0f2f5":"white"}}>
-              <div style={{width:"50px", height:"50px", borderRadius:"50%", background:c.exists?"#d9fdd3":"#e9edef", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:"18px", color:"#111b21"}}>{c.name[0].toUpperCase()}</div>
-              <div style={{flex:1}}>
-                <div style={{display:"flex", justifyContent:"space-between"}}><b style={{fontSize:"16px", color:"#111b21"}}>{c.name}</b><span style={{fontSize:"12px", color:"#111b21", fontWeight:500}}>{c.messages[c.messages.length-1]?.time}</span></div>
-                {/* NUMÉRO VISIBLE + STATUT NON FLOU */}
-                <div style={{fontSize:"13px", color:c.exists?"#008069":"#d93025", fontWeight:700, marginTop:"2px"}}>{c.number} • {c.exists?(c.online?"en ligne":"hors ligne"):"Pas sur Buja Connect"}</div>
-                <div style={{fontSize:"14px", color:"#111b21", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"220px", display:"flex", alignItems:"center", gap:"4px", fontWeight:400, marginTop:"2px"}}>
-                  {c.messages[c.messages.length-1]?.me && <span style={{color:c.messages[c.messages.length-1]?.status==="read"?"#53bdeb":"#111b21", fontWeight:700}}>{c.messages[c.messages.length-1]?.status==="sent"?"✓":"✓✓"}</span>}
-                  <span style={{color:"#111b21"}}>{c.messages[c.messages.length-1]?.text?.slice(0,40)}</span>
+        {tab==="disc" && (
+          <>
+            <div style={{padding:8}}><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher" style={{width:"100%", background:"#f0f2f5", border:"none", borderRadius:8, padding:"10px 12px"}}/></div>
+            <div style={{flex:1, overflowY:"auto"}}>
+              {filtered.map(c=>(
+                <div key={c.id} onClick={()=>setSelectedId(c.id)} style={{display:"flex", gap:12, padding:"12px 16px", cursor:"pointer", background:selectedId===c.id?"#f0f2f5":"white"}}>
+                  <div style={{width:49, height:49, borderRadius:"50%", background:c.exists?"#d9fdd3":"#e9edef", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700}}>{c.name[0]}</div>
+                  <div style={{flex:1, borderBottom:"1px solid #f5f5f5"}}><div style={{display:"flex", justifyContent:"space-between"}}><b style={{fontSize:15}}>{c.name}</b><span style={{fontSize:11}}>{c.messages[c.messages.length-1]?.time}</span></div><div style={{fontSize:13, color:c.exists?"#008069":"#e11", fontWeight:600}}>{c.number} • {c.exists?"Sur Buja":"Pas sur Buja"}</div><div style={{fontSize:13, color:"#667781", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:200}}>{c.messages[c.messages.length-1]?.text}</div></div>
                 </div>
+              ))}
+              {filtered.length===0 && <p style={{textAlign:"center", marginTop:40, color:"#888"}}>Aucune discussion<br/><button onClick={()=>setShowAdd(true)} style={{marginTop:8, background:"#25D366", color:"white", border:"none", padding:"8px 16px", borderRadius:20}}>Nouveau contact</button></p>}
+            </div>
+          </>
+        )}
+        {tab==="actu" && (
+          <div style={{flex:1, overflowY:"auto"}}>
+            <div style={{padding:"16px", display:"flex", alignItems:"center", gap:12, borderBottom:"1px solid #f0f2f5", cursor:"pointer"}} onClick={()=>setShowStatusAdd(true)}>
+              <div style={{width:50, height:50, borderRadius:"50%", background:"#25D366", display:"flex", alignItems:"center", justifyContent:"center", color:"white", fontSize:24}}>+</div>
+              <div><b>Mon statut</b><div style={{fontSize:13, color:"#667781"}}>Appuie pour ajouter</div></div>
+            </div>
+            <div style={{padding:"12px 16px", fontSize:13, color:"#667781", fontWeight:600}}>ACTUALITÉS RÉCENTES</div>
+            {statuses.map(s=>(
+              <div key={s.id} onClick={()=>setViewStatus(s)} style={{display:"flex", gap:12, padding:"12px 16px", cursor:"pointer"}}>
+                <div style={{width:49, height:49, borderRadius:"50%", border:"3px solid #25D366", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700}}>{s.user_name[0]}</div>
+                <div><b style={{fontSize:15}}>{s.user_number===currentUser.number?"Mon statut":s.user_name}</b><div style={{fontSize:13, color:"#667781"}}>{new Date(s.created_at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})} • {s.text?.slice(0,30)}</div></div>
               </div>
+            ))}
+            {!supabase && <p style={{textAlign:"center", marginTop:20, color:"#888", fontSize:13}}>Ajoute Supabase pour voir les statuts de YVES et autres</p>}
+          </div>
+        )}
+        {tab==="comm" && (
+          <div style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:32, textAlign:"center"}}>
+            <div style={{width:120, height:120, background:"#f0f2f5", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:40}}>👥</div>
+            <h3>Communautés</h3><p style={{color:"#667781", fontSize:14}}>Bientôt disponible.</p>
+          </div>
+        )}
+        {tab==="appels" && (
+          <div style={{flex:1, overflowY:"auto"}}>
+            <div style={{padding:"16px", display:"flex", alignItems:"center", gap:12}}><div style={{width:50, height:50, borderRadius:"50%", background:"#25D366", display:"flex", alignItems:"center", justifyContent:"center", color:"white"}}>📞</div><div><b style={{color:"#25D366"}}>Créer un lien d'appel</b><div style={{fontSize:13, color:"#667781"}}>Partage un lien</div></div></div>
+            <div style={{textAlign:"center", marginTop:60, color:"#888"}}>Aucun appel récent</div>
+          </div>
+        )}
+        <div style={{height:64, borderTop:"1px solid #e9edef", display:"flex", background:"white"}}>
+          {[
+            {id:"disc", label:"Disc.", icon:"💬"},
+            {id:"actu", label:"Actus", icon:"⭕"},
+            {id:"comm", label:"Commu.", icon:"👥"},
+            {id:"appels", label:"Appels", icon:"📞"},
+          ].map(t=>(
+            <div key={t.id} onClick={()=>setTab(t.id as any)} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", color:tab===t.id?"#008069":"#667781"}}>
+              <span style={{fontSize:20}}>{t.icon}</span><span style={{fontSize:11, fontWeight:tab===t.id?700:400, marginTop:2}}>{t.label}</span>
             </div>
           ))}
         </div>
@@ -114,58 +172,30 @@ export default function Page() {
       <div style={{flex:1, background:"#efeae2", display:"flex", flexDirection:"column"}}>
         {selected ? (
           <>
-            <div style={{height:"68px", background:"#f0f2f5", display:"flex", alignItems:"center", padding:"0 16px", gap:"12px"}}>
-              <div style={{width:"42px", height:"42px", borderRadius:"50%", background:"#dfe5e7", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:"16px"}}>{selected.name[0].toUpperCase()}</div>
-              <div><div style={{fontWeight:700, fontSize:"16px", color:"#111b21"}}>{selected.name}</div><div style={{fontSize:"13px", color:"#111b21", fontWeight:600}}>{selected.number} • {selected.exists?(selected.online?"en ligne":"hors ligne"):"Pas sur Buja Connect"}</div></div>
+            <div style={{height:59, background:"#f0f2f5", display:"flex", alignItems:"center", padding:"0 16px", gap:12}}><div style={{width:40, height:40, borderRadius:"50%", background:"#dfe5e7", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700}}>{selected.name[0]}</div><div><b>{selected.name}</b><div style={{fontSize:12, color:"#667781"}}>{selected.number} • {selected.exists?(selected.online?"en ligne":"hors ligne"):"Pas sur Buja"}</div></div></div>
+            <div style={{flex:1, padding:16, overflowY:"auto", display:"flex", flexDirection:"column", gap:8}}>
+              {selected.messages.map(m=>(<div key={m.id} style={{alignSelf:m.me?"flex-end":"flex-start", background:m.me?"#d9fdd3":"white", padding:"8px 12px", borderRadius:8, maxWidth:"65%"}}><span style={{fontSize:14}}>{m.text}</span><div style={{fontSize:10, textAlign:"right", color:"#667781", marginTop:4}}>{m.time} {m.me && (m.status==="sent"?"✓":"✓✓")}</div></div>))}<div ref={endRef}/>
             </div>
-            <div style={{flex:1, padding:"16px", overflowY:"auto", display:"flex", flexDirection:"column", gap:"8px"}}>
-              {selected.messages.map(m=>(
-                <div key={m.id} style={{alignSelf:m.me?"flex-end":"flex-start", background:m.me?"#d9fdd3":"white", padding:"10px 12px", borderRadius:"8px", maxWidth:"75%", boxShadow:"0 1px 1px rgba(0,0,0,0.1)"}}>
-                  {m.text && <span style={{fontSize:"15px", color:"#111b21", fontWeight:400, wordBreak:"break-word"}}>{m.text}</span>}
-                  {m.audioUrl && <audio controls src={m.audioUrl} style={{width:"220px"}}/>}
-                  <div style={{display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"4px", marginTop:"4px"}}>
-                    <span style={{fontSize:"11px", color:"#111b21", fontWeight:500}}>{m.time}</span>
-                    {m.me && <span style={{fontSize:"13px", fontWeight:700, color:m.status==="read"?"#53bdeb":"#111b21"}}>{m.status==="sent"?"✓":"✓✓"}</span>}
-                  </div>
-                </div>
-              ))}
-              <div ref={endRef}/>
-            </div>
-            <div style={{height:"68px", background:"#f0f2f5", display:"flex", alignItems:"center", padding:"0 12px", gap:"8px"}}>
-              {isRecording ? (
-                <div style={{flex:1, display:"flex", alignItems:"center", gap:"12px", background:"white", borderRadius:"24px", padding:"0 14px", height:"44px"}}>
-                  <button onClick={cancelRecording} style={{background:"transparent", border:"none", fontSize:"18px", cursor:"pointer"}}>🗑️</button>
-                  <div style={{width:"10px", height:"10px", background:"red", borderRadius:"50%"}}></div>
-                  <span style={{flex:1, fontSize:"15px", fontWeight:600, color:"#111b21"}}>{formatTime(recTime)}</span>
-                  <button onClick={stopRecording} style={{background:"#25D366", border:"none", width:"34px", height:"34px", borderRadius:"50%", color:"white", cursor:"pointer"}}>▶</button>
-                </div>
-              ) : (
-                <>
-                  <input value={inputText} onChange={e=>setInputText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendText()} placeholder={selected.exists?"Entrez un message":"Non enregistré"} disabled={!selected.exists} style={{flex:1, height:"44px", borderRadius:"8px", border:"none", padding:"0 14px", outline:"none", background:"white", fontSize:"16px", color:"#111b21"}}/>
-                  {selected.exists && (inputText.trim() ? <button onClick={sendText} style={{background:"#25D366", border:"none", width:"44px", height:"44px", borderRadius:"50%", color:"white", cursor:"pointer", fontSize:"18px"}}>➤</button> : <button onClick={startRecording} style={{background:"#25D366", border:"none", width:"44px", height:"44px", borderRadius:"50%", color:"white", cursor:"pointer", fontSize:"18px"}}>🎤</button>)}
-                </>
-              )}
-            </div>
+            <div style={{height:62, background:"#f0f2f5", display:"flex", alignItems:"center", padding:"0 12px", gap:8}}><input value={inputText} onChange={e=>setInputText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendText()} placeholder={selected.exists?"Message":"Non enregistré"} disabled={!selected.exists} style={{flex:1, height:42, borderRadius:8, border:"none", padding:"0 12px"}}/><button onClick={sendText} style={{width:42, height:42, borderRadius:"50%", background:"#25D366", color:"white", border:"none"}}>➤</button></div>
           </>
-        ) : (
-          <div style={{flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column"}}><div style={{width:"64px", height:"64px", background:"#25D366", borderRadius:"16px", display:"flex", alignItems:"center", justifyContent:"center", color:"white", fontSize:"28px", fontWeight:800}}>B</div><h2 style={{fontWeight:300, color:"#111b21", marginTop:"16px"}}>Buja Connect</h2><p style={{color:"#111b21", fontWeight:500}}>Sélectionne un contact</p></div>
-        )}
+        ) : (<div style={{flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column"}}><div style={{width:64, height:64, background:"#25D366", borderRadius:16, display:"flex", alignItems:"center", justifyContent:"center", color:"white", fontWeight:800, fontSize:28}}>B</div><p style={{color:"#667781", marginTop:12}}>Sélectionne une discussion</p></div>)}
       </div>
       {showAdd && (
-        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:99}}>
-          <div style={{background:"white", borderRadius:"12px", padding:"24px", width:"90%", maxWidth:"360px"}}>
-            <h3 style={{margin:"0 0 16px 0", color:"#111b21", fontSize:"18px"}}>Nouveau contact</h3>
-            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nom ex: YVES" style={{width:"100%", boxSizing:"border-box", border:"2px solid #e9edef", borderRadius:"8px", padding:"14px", marginBottom:"12px", fontSize:"16px", color:"#111b21"}}/>
-            <input value={newNumber} onChange={e=>setNewNumber(e.target.value)} placeholder="Numéro 66465801" style={{width:"100%", boxSizing:"border-box", border:"2px solid #e9edef", borderRadius:"8px", padding:"14px", marginBottom:"8px", fontSize:"16px", color:"#111b21"}}/>
-            <p style={{fontSize:"12px", color:"#111b21", fontWeight:500, margin:"0 0 12px 0"}}>On compare les 8 derniers chiffres. Comptes sur ce navigateur: {users.map(u=>u.number).join(", ") || "aucun"}</p>
-            <div style={{display:"flex", justifyContent:"flex-end", gap:"8px"}}>
-              <button onClick={()=>setShowAdd(false)} style={{padding:"10px 16px", border:"none", background:"transparent", cursor:"pointer", fontSize:"15px", fontWeight:600, color:"#111b21"}}>Annuler</button>
-              <button onClick={addContact} style={{padding:"10px 20px", border:"none", background:"#25D366", color:"white", borderRadius:"20px", cursor:"pointer", fontSize:"15px", fontWeight:700}}>Ajouter</button>
-            </div>
-          </div>
+        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:99}}>
+          <div style={{background:"white", padding:24, borderRadius:12, width:340}}><h3 style={{marginTop:0}}>Nouveau contact</h3><input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nom ex: YVES" style={{width:"100%", padding:12, marginBottom:10, borderRadius:8, border:"1px solid #ddd"}}/><input value={newNumber} onChange={e=>setNewNumber(e.target.value)} placeholder="Numéro ex: 66465801" style={{width:"100%", padding:12, marginBottom:12, borderRadius:8, border:"1px solid #ddd"}}/><p style={{fontSize:11, color:"#888"}}>{supabase ? `Supabase: ${users.length} comptes` : `Local: ${users.length} comptes - Ajoute Supabase pour voir YVES partout`}</p><div style={{display:"flex", justifyContent:"flex-end", gap:8}}><button onClick={()=>setShowAdd(false)} style={{border:"none", background:"transparent"}}>Annuler</button><button onClick={addContact} style={{background:"#25D366", color:"white", border:"none", padding:"8px 16px", borderRadius:20}}>Ajouter</button></div></div>
         </div>
       )}
-      <button onClick={logout} style={{position:"absolute", top:"8px", left:"8px", fontSize:"11px", border:"none", background:"#f0f2f5", padding:"4px 8px", borderRadius:"6px", cursor:"pointer", color:"#111b21", fontWeight:600}}>Déco</button>
+      {showStatusAdd && (
+        <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:99}}>
+          <div style={{background:"white", padding:24, borderRadius:12, width:340}}><h3>Nouveau statut</h3><textarea value={statusText} onChange={e=>setStatusText(e.target.value)} placeholder="Quoi de neuf ?" style={{width:"100%", height:80, padding:12, borderRadius:8, border:"1px solid #ddd"}}/><div style={{display:"flex", justifyContent:"flex-end", gap:8, marginTop:12}}><button onClick={()=>setShowStatusAdd(false)} style={{border:"none", background:"transparent"}}>Annuler</button><button onClick={addStatus} style={{background:"#25D366", color:"white", border:"none", padding:"8px 16px", borderRadius:20}}>Publier</button></div></div>
+        </div>
+      )}
+      {viewStatus && (
+        <div style={{position:"fixed", inset:0, background:"black", display:"flex", flexDirection:"column", zIndex:100, color:"white"}}>
+          <div style={{height:60, padding:"0 16px", display:"flex", alignItems:"center", justifyContent:"space-between"}}><div style={{display:"flex", alignItems:"center", gap:10}}><div style={{width:40, height:40, borderRadius:"50%", background:"#25D366", display:"flex", alignItems:"center", justifyContent:"center"}}>{viewStatus.user_name[0]}</div><div><b>{viewStatus.user_name}</b><div style={{fontSize:12, opacity:0.7}}>{new Date(viewStatus.created_at).toLocaleString()}</div></div></div><button onClick={()=>setViewStatus(null)} style={{background:"transparent", border:"none", color:"white", fontSize:24}}>✕</button></div>
+          <div style={{flex:1, display:"flex", alignItems:"center", justifyContent:"center", padding:24, fontSize:24, textAlign:"center"}}>{viewStatus.text}</div>
+        </div>
+      )}
     </div>
   );
 }
