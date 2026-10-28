@@ -1,129 +1,172 @@
-'use client'
-import { useEffect, useState, useRef } from 'react'
-import { createClient } from '@supabase/supabase-js'
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+"use client";
+import { useState, useEffect } from "react";
 
-type Contact = { contact_phone: string, contact_name: string, isOnBuja?: boolean, last_seen?: string, realName?: string }
-type Message = { id: string, from_phone: string, from_name: string, to_phone: string, content: string, created_at: string }
+type Contact = {
+  id: string;
+  name: string;
+  lastMessage: string;
+  time: string;
+  unread?: number;
+};
 
-export default function Page(){
-  const [myPhone, setMyPhone] = useState(""); const [myName, setMyName] = useState("")
-  const [nameInput, setNameInput] = useState(""); const [phoneInput, setPhoneInput] = useState("")
-  const [isLogged, setIsLogged] = useState(false); const [tab, setTab] = useState('chats')
-  const [contacts, setContacts] = useState<Contact[]>([]); const [messages, setMessages] = useState<Message[]>([])
-  const [active, setActive] = useState<string | null>(null); const [text, setText] = useState("")
-  const [showAdd, setShowAdd] = useState(false); const [newName, setNewName] = useState(""); const [newPhone, setNewPhone] = useState("")
-  const bottomRef = useRef<HTMLDivElement>(null); const fileRef = useRef<HTMLInputElement>(null)
+export default function Page() {
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("Toutes");
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newMsg, setNewMsg] = useState("");
 
-  useEffect(()=>{
-    const p=localStorage.getItem('buja_phone'); const n=localStorage.getItem('buja_name')
-    if(p&&n){ setMyPhone(p); setMyName(n); setIsLogged(true) }
-  },[])
+  // Charger depuis localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("buja_contacts");
+    if (saved) setContacts(JSON.parse(saved));
+  }, []);
 
-  useEffect(()=>{
-    if(!isLogged) return
-    const load = async ()=>{
-      const {data: c} = await supabase.from('buja_contacts').select('*').eq('owner_phone', myPhone)
-      if(c){
-        const enriched = await Promise.all(c.map(async (ct:any)=>{
-          const {data: u} = await supabase.from('buja_users').select('*').eq('phone', ct.contact_phone).single()
-          return { contact_phone: ct.contact_phone, contact_name: ct.contact_name, isOnBuja: !!u, last_seen: u?.last_seen, realName: u?.name }
-        }))
-        setContacts(enriched)
-      }
-      const {data: m} = await supabase.from('buja_messages').select('*').order('created_at',{ascending:true}).limit(500)
-      if(m) setMessages(m.filter(x=> x.from_phone===myPhone || x.to_phone===myPhone))
-    }
-    load()
-    const ch = supabase.channel('buja-num').on('postgres_changes',{event:'INSERT', schema:'public', table:'buja_messages'}, pl=>{
-      const msg=pl.new as Message; if(msg.from_phone===myPhone||msg.to_phone===myPhone) setMessages(p=>[...p, msg])
-    }).subscribe()
-    const iv=setInterval(async()=>{ await supabase.from('buja_users').update({last_seen: new Date().toISOString()}).eq('phone', myPhone) },30000)
-    return ()=>{ supabase.removeChannel(ch); clearInterval(iv) }
-  },[isLogged, myPhone])
+  useEffect(() => {
+    localStorage.setItem("buja_contacts", JSON.stringify(contacts));
+  }, [contacts]);
 
-  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:'smooth'}) },[messages, active])
+  const addContact = () => {
+    if (!newName.trim()) return;
+    const c: Contact = {
+      id: Date.now().toString(),
+      name: newName,
+      lastMessage: newMsg || "Nouveau contact ajouté",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    setContacts([c, ...contacts]);
+    setNewName(""); setNewMsg(""); setShowAdd(false);
+  };
 
-  const login = async ()=>{
-    if(!nameInput.trim()||!phoneInput.trim()) return alert('Nom + Numéro')
-    const phone = phoneInput.trim().replace(/\s/g,'')
-    await supabase.from('buja_users').upsert({phone, name: nameInput.trim(), last_seen: new Date().toISOString()})
-    localStorage.setItem('buja_phone', phone); localStorage.setItem('buja_name', nameInput.trim())
-    setMyPhone(phone); setMyName(nameInput.trim()); setIsLogged(true)
-  }
+  const filtered = contacts.filter(c => 
+    c.name.toLowerCase().includes(search.toLowerCase())
+  );
 
-  const addContact = async ()=>{
-    if(!newName.trim()||!newPhone.trim()) return alert('Nom + Numéro')
-    const phone = newPhone.trim().replace(/\s/g,'')
-    if(phone===myPhone) return alert('C\'est toi même')
-    const {data: exist} = await supabase.from('buja_contacts').select('*').eq('owner_phone', myPhone).eq('contact_phone', phone).single()
-    if(exist) return alert('Déjà ajouté')
-    // VERIFIE PAR NUMERO si il est sur BujaConnect
-    const {data: user} = await supabase.from('buja_users').select('*').eq('phone', phone).single()
-    await supabase.from('buja_contacts').insert({owner_phone: myPhone, contact_phone: phone, contact_name: newName.trim()})
-    setContacts([...contacts, {contact_phone: phone, contact_name: newName.trim(), isOnBuja: !!user, last_seen: user?.last_seen, realName: user?.name}])
-    setShowAdd(false); setNewName(""); setNewPhone("")
-  }
-
-  const send = async (override?: string)=>{
-    const c=override||text; if(!c.trim()||!active) return
-    await supabase.from('buja_messages').insert({from_phone: myPhone, from_name: myName, to_phone: active, content: c})
-    setText("")
-  }
-  const handlePhoto = (e:any)=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>send(r.result as string); r.readAsDataURL(f) }
-
-  const isOnline = (ls?: string)=> ls && (Date.now() - new Date(ls).getTime() < 120000)
-
-  if(!isLogged) return (
-    <main style={{minHeight:'100vh', background:'#111b21', display:'flex', justifyContent:'center', alignItems:'center', fontFamily:'sans-serif'}}>
-      <div style={{background:'white', width:'360px', borderRadius:'4px', overflow:'hidden'}}>
-        <div style={{background:'#008069', padding:'35px', textAlign:'center', color:'white'}}><div style={{fontSize:'50px'}}>💬</div><h2 style={{fontWeight:300}}>BUJA CONNECT</h2><p style={{fontSize:'12px', marginTop:'6px', opacity:0.9}}>Identification par NUMÉRO comme WhatsApp</p></div>
-        <div style={{padding:'22px'}}><input value={nameInput} onChange={e=>setNameInput(e.target.value)} placeholder="Ton nom" style={{width:'100%', border:'none', borderBottom:'2px solid #008069', padding:'12px 0', outline:'none', fontSize:'16px'}}/><input value={phoneInput} onChange={e=>setPhoneInput(e.target.value)} placeholder="Ton numéro ex: +25779..." style={{width:'100%', border:'none', borderBottom:'2px solid #008069', padding:'12px 0', marginTop:'12px', outline:'none', fontSize:'16px'}}/><button onClick={login} style={{width:'100%', background:'#008069', color:'white', border:'none', padding:'14px', borderRadius:'25px', marginTop:'22px', fontWeight:'700', cursor:'pointer'}}>CRÉER COMPTE</button><p style={{fontSize:'11px', color:'#8696a0', textAlign:'center', marginTop:'10px'}}>Ton numéro = ton identifiant mondial</p></div>
-      </div>
-    </main>
-  )
-
-  const activeContact = contacts.find(c=>c.contact_phone===active)
-  const filtered = messages.filter(m=> (m.from_phone===active && m.to_phone===myPhone) || (m.from_phone===myPhone && m.to_phone===active))
+  const selected = contacts.find(c => c.id === selectedId);
 
   return (
-    <main style={{height:'100vh', background:'#111b21', display:'flex', justifyContent:'center', fontFamily:'Segoe UI, sans-serif'}}>
-      <div style={{width:'100%', maxWidth:'480px', background:'#111b21', display:'flex', flexDirection:'column', position:'relative'}}>
-        {!active ? <div style={{background:'#202c33', height:'60px', padding:'0 16px', display:'flex', alignItems:'center', justifyContent:'space-between', color:'white'}}><div style={{fontWeight:'700'}}>BujaConnect</div><div style={{fontSize:'12px', color:'#25d366'}}>{myName} • {myPhone}</div></div>
-        : <div style={{background:'#202c33', height:'60px', display:'flex', alignItems:'center', padding:'0 10px', justifyContent:'space-between', color:'white'}}><div style={{display:'flex', alignItems:'center', gap:'8px'}}><button onClick={()=>setActive(null)} style={{background:'transparent', border:'none', color:'white', fontSize:'22px', cursor:'pointer'}}>←</button><div style={{width:'38px', height:'38px', background:'#54656f', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center'}}>👤</div><div><div style={{fontWeight:'600'}}>{activeContact?.contact_name}</div><div style={{fontSize:'11px', color:'#8696a0'}}>{activeContact?.contact_phone} {activeContact?.realName?`• vrai nom: ${activeContact.realName}`:''}</div><div style={{fontSize:'12px', color: isOnline(activeContact?.last_seen)?'#25d366':'#8696a0'}}>{activeContact?.isOnBuja ? (isOnline(activeContact?.last_seen)?'en ligne':'hors ligne') : 'Pas sur BujaConnect'}</div></div></div><div>📞 📹</div></div>}
+    <div className="h-screen flex bg-[#f0f2f5] font-sans">
+      {/* LEFT */}
+      <div className="w-[420px] bg-white border-r border-[#e9edef] flex flex-col">
+        {/* Header */}
+        <div className="h-[59px] px-4 flex items-center justify-between bg-white">
+          <h1 className="text-[#25D366] font-bold text-[22px] tracking-tight">WhatsApp</h1>
+          <div className="flex gap-3 items-center">
+            <button className="w-9 h-9 bg-[#25D366] rounded-full flex items-center justify-center text-white text-xl">+</button>
+          </div>
+        </div>
 
-        {!active && (
-          <div style={{flex:1, overflowY:'auto'}}>
-            {contacts.map(c=>(
-              <div key={c.contact_phone} style={{display:'flex', padding:'12px 16px', gap:'14px', borderBottom:'1px solid #202c33'}}>
-                <div style={{width:'49px', height:'49px', background:'#2a3942', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center'}}>👤</div>
-                <div style={{flex:1}}><div style={{display:'flex', justifyContent:'space-between'}}><div style={{color:'white', fontWeight:'500'}}>{c.contact_name}</div><div style={{color:'#8696a0', fontSize:'11px'}}>{c.contact_phone}</div></div>
-                <div style={{display:'flex', justifyContent:'space-between', marginTop:'4px', alignItems:'center'}}><div style={{fontSize:'12px', color: c.isOnBuja?'#8696a0':'#f15c6d'}}>{c.isOnBuja ? (c.realName?`S'est inscrit: ${c.realName}`:`Sur BujaConnect`) : 'Pas encore sur BujaConnect'}</div>{c.isOnBuja ? <button onClick={()=>setActive(c.contact_phone)} style={{background:'#25d366', border:'none', borderRadius:'14px', padding:'6px 14px', color:'white', fontSize:'12px', fontWeight:'700', cursor:'pointer'}}>Discuter</button> : <button onClick={()=>{ const msg=`Rejoins BUJA CONNECT ${window.location.origin} mon numéro ${myPhone}`; window.open(`https://wa.me/${c.contact_phone.replace('+','')}?text=${encodeURIComponent(msg)}`,'_blank')}} style={{background:'#54656f', border:'none', borderRadius:'14px', padding:'6px 14px', color:'white', fontSize:'12px', cursor:'pointer'}}>INVITER</button>}</div></div>
+        {/* Search */}
+        <div className="px-3 py-2">
+          <div className="bg-[#f0f2f5] rounded-lg flex items-center px-3 h-9">
+            <span className="text-[#54656f] mr-6">⌕</span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Rechercher ou démarrer une discussion"
+              className="bg-transparent w-full outline-none text-[14px] placeholder:text-[#667781]"
+            />
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="flex gap-2 px-3 py-2 overflow-x-auto">
+          {["Toutes", "Non lues", "Favoris", "Groupes"].map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-3 py-1.5 rounded-full text-[13px] whitespace-nowrap border ${
+                filter === f ? "bg-[#e7fce3] text-[#008069] border-[#e7fce3]" : "bg-white text-[#54656f] border-[#e9edef]"
+              }`}
+            >
+              {f === "Non lues" && contacts.length > 0 ? `${f} ${contacts.length}` : f === "Groupes" ? `${f} 0` : f}
+            </button>
+          ))}
+          <button onClick={() => setShowAdd(true)} className="w-7 h-7 border rounded-full flex items-center justify-center text-[#54656f]">+</button>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="p-10 text-center text-[#667781] text-[14px]">
+              {contacts.length === 0 ? (
+                <>
+                  <p>Aucune discussion</p>
+                  <button onClick={() => setShowAdd(true)} className="mt-3 text-[#25D366] font-medium">+ Ajouter un contact</button>
+                </>
+              ) : "Aucun résultat"}
+            </div>
+          ) : (
+            filtered.map(c => (
+              <div
+                key={c.id}
+                onClick={() => setSelectedId(c.id)}
+                className={`flex gap-3 px-3 py-3 hover:bg-[#f5f6f6] cursor-pointer ${selectedId === c.id ? "bg-[#f0f2f5]" : ""}`}
+              >
+                <div className="w-12 h-12 rounded-full bg-[#dfe5e7] flex items-center justify-center font-bold text-[#54656f] shrink-0">
+                  {c.name[0]?.toUpperCase()}
+                </div>
+                <div className="flex-1 border-b border-[#e9edef] pb-3">
+                  <div className="flex justify-between">
+                    <p className="font-medium text-[16px] text-[#111b21]">{c.name}</p>
+                    <span className="text-[12px] text-[#667781]">{c.time}</span>
+                  </div>
+                  <p className="text-[14px] text-[#667781] truncate">✓ {c.lastMessage}</p>
+                </div>
               </div>
-            ))}
-            {contacts.length===0 && <div style={{textAlign:'center', marginTop:'80px', padding:'20px'}}><div style={{fontSize:'50px'}}>👥</div><p style={{color:'white', marginTop:'10px', fontWeight:'600'}}>Aucun contact</p><p style={{color:'#8696a0', fontSize:'13px', marginTop:'6px'}}>Clique + → Ajoute NOM + NUMÉRO<br/>C'est le NUMÉRO qui identifie, pas le nom.<br/>Tu peux l'appeler comme tu veux chez toi.</p></div>}
-            <button onClick={()=>setShowAdd(true)} style={{position:'absolute', bottom:'20px', right:'20px', width:'56px', height:'56px', background:'#25d366', border:'none', borderRadius:'50%', fontSize:'28px', color:'white', cursor:'pointer', boxShadow:'0 4px 10px rgba(0,0,0,0.5)'}}>+</button>
-          </div>
-        )}
+            ))
+          )}
+        </div>
+      </div>
 
-        {active && (
-          <div style={{flex:1, display:'flex', flexDirection:'column', background:'#0b141a'}}>
-            <div style={{flex:1, overflowY:'auto', padding:'12px'}}>{filtered.map(m=>{ const me=m.from_phone===myPhone; const isImg=m.content.startsWith('data:image'); return (<div key={m.id} style={{display:'flex', justifyContent:me?'flex-end':'flex-start', marginBottom:'8px'}}><div style={{maxWidth:'78%', background:me?'#005c4b':'#202c33', color:'white', borderRadius:me?'8px 0 8px 8px':'0 8px 8px 8px', padding:'6px 8px'}}>{isImg?<img src={m.content} style={{maxWidth:'200px', borderRadius:'6px'}}/>:<div style={{fontSize:'14.5px', whiteSpace:'pre-wrap', paddingRight:'45px'}}>{m.content}</div>}<div style={{float:'right', display:'flex', gap:'4px', marginTop:'4px'}}><span style={{fontSize:'11px', color:'#8696a0'}}>{new Date(m.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>{me&&<span style={{fontSize:'11px', color:'#53bdeb'}}>✓✓</span>}</div></div></div>) })}<div ref={bottomRef}/></div>
-            <div style={{background:'#202c33', padding:'6px 8px', display:'flex', alignItems:'center', gap:'6px'}}><input type="file" ref={fileRef} onChange={handlePhoto} accept="image/*" style={{display:'none'}}/><button onClick={()=>fileRef.current?.click()} style={{background:'transparent', border:'none', fontSize:'22px', cursor:'pointer'}}>📎</button><input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()} placeholder="Message" style={{flex:1, background:'#2a3942', border:'none', borderRadius:'20px', padding:'10px 16px', color:'white', outline:'none'}}/><button onClick={()=>send()} style={{width:'45px', height:'45px', background:'#25d366', border:'none', borderRadius:'50%', cursor:'pointer'}}>➤</button></div>
-          </div>
-        )}
-
-        {showAdd && (
-          <div style={{position:'absolute', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px'}}>
-            <div style={{background:'white', borderRadius:'8px', padding:'20px', width:'100%'}}>
-              <h3 style={{color:'#111b21'}}>Nouveau contact</h3><p style={{fontSize:'12px', color:'#667781', marginTop:'4px'}}>Le NUMÉRO identifie la personne. Le NOM c'est juste comment TU l'appelles chez toi.</p>
-              <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Comment tu l'appelles? Ex: Jean" style={{width:'100%', border:'none', borderBottom:'2px solid #008069', padding:'12px 0', marginTop:'16px', outline:'none', fontSize:'15px'}}/>
-              <input value={newPhone} onChange={e=>setNewPhone(e.target.value)} placeholder="Son NUMÉRO ex: +25779XXXXXX" style={{width:'100%', border:'none', borderBottom:'2px solid #008069', padding:'12px 0', marginTop:'12px', outline:'none', fontSize:'15px'}}/>
-              <div style={{display:'flex', gap:'10px', marginTop:'20px'}}><button onClick={()=>setShowAdd(false)} style={{flex:1, background:'#f0f2f5', border:'none', padding:'12px', borderRadius:'24px', cursor:'pointer'}}>Annuler</button><button onClick={addContact} style={{flex:1, background:'#008069', border:'none', padding:'12px', borderRadius:'24px', color:'white', fontWeight:'700', cursor:'pointer'}}>Ajouter</button></div>
+      {/* RIGHT */}
+      <div className="flex-1 flex flex-col bg-[#efeae2] relative">
+        {/* WhatsApp wallpaper */}
+        <div className="absolute inset-0 opacity-40" style={{backgroundImage: `url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')`}}></div>
+        
+        {selected ? (
+          <>
+            <div className="h-[59px] bg-[#f0f2f5] border-l border-[#e9edef] flex items-center px-4 gap-3 z-10">
+              <div className="w-10 h-10 rounded-full bg-[#dfe5e7] flex items-center justify-center font-bold">{selected.name[0].toUpperCase()}</div>
+              <div><p className="font-semibold text-[#111b21]">{selected.name}</p><p className="text-[13px] text-[#667781]">en ligne</p></div>
+            </div>
+            <div className="flex-1 z-10 p-6 flex items-end">
+              <div className="bg-white rounded-lg p-3 shadow text-[14px] max-w-[60%]">
+                {selected.lastMessage}
+                <span className="text-[11px] text-[#667781] ml-2">{selected.time}</span>
+              </div>
+            </div>
+            <div className="h-[62px] bg-[#f0f2f5] flex items-center px-4 gap-3 z-10">
+              <input placeholder="Entrez un message" className="flex-1 h-10 rounded-lg px-4 outline-none text-[14px]" />
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 z-10 flex items-center justify-center">
+            <div className="text-center">
+              <h2 className="text-[32px] font-light text-[#41525d]">WhatsApp Web</h2>
+              <p className="text-[#667781] text-[14px] mt-2">Sélectionne une discussion ou ajoute un contact</p>
+              <button onClick={() => setShowAdd(true)} className="mt-6 bg-[#25D366] text-white px-6 py-2 rounded-full text-[14px]">+ Nouveau contact</button>
             </div>
           </div>
         )}
       </div>
-    </main>
-  )
+
+      {/* MODAL ADD */}
+      {showAdd && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[360px]">
+            <h3 className="font-bold text-[18px] mb-4">Ajouter contact</h3>
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nom / Numéro" className="w-full border rounded-lg p-3 mb-3 outline-none" />
+            <input value={newMsg} onChange={e => setNewMsg(e.target.value)} placeholder="Dernier message" className="w-full border rounded-lg p-3 mb-4 outline-none" />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-[#667781]">Annuler</button>
+              <button onClick={addContact} className="px-5 py-2 bg-[#25D366] text-white rounded-full">Ajouter</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
