@@ -56,17 +56,14 @@ export default function Page() {
   const addStatus = async () => { if(!statusText.trim()||!currentUser||!supabase) return; await supabase.from("statuses").insert([{user_number:currentUser.number, user_name:currentUser.name, text:statusText}]); setStatusText(""); setShowStatusAdd(false); loadStatuses(); };
   const sendText = async () => { if(!inputText.trim()||!selected||!currentUser||!supabase) return; await supabase.from("messages").insert([{from_number:currentUser.number, to_number:selected.number, text: replyTo ? `↩️ ${replyTo.text?.slice(0,30) || "vocal"}\n${inputText}` : inputText, is_read:false}]); setInputText(""); setReplyTo(null); loadMessages(); };
   const createCall = async (type: "vocal" | "video") => { if(!selected || !currentUser || !supabase) return; await supabase.from("calls").insert([{from_number:currentUser.number, to_number:selected.number, to_name:selected.name, type, status:"sortant"}]); loadCalls(); };
-
-  // ACTIONS MENU COMME TA CAPTURE
   const deleteMessage = async () => { if(!selectedMsg || !supabase) return; await supabase.from("messages").delete().eq("id", selectedMsg.id); setMessages(prev=>prev.filter(m=>m.id!==selectedMsg.id)); setSelectedMsg(null); };
   const downloadAudio = () => { if(!selectedMsg?.audio_url) return; const a=document.createElement("a"); a.href=selectedMsg.audio_url; a.download=`vocal-${selectedMsg.id}.webm`; a.click(); setSelectedMsg(null); };
-  const markImportant = async () => { if(!selectedMsg || !supabase) return; await supabase.from("messages").update({is_important: !selectedMsg.is_important}).eq("id", selectedMsg.id); setMessages(prev=>prev.map(m=>m.id===selectedMsg.id ? {...m, is_important: !m.is_important} : m)); setSelectedMsg(null); };
+  const markImportant = async () => { if(!selectedMsg || !supabase) return; const newVal = !selectedMsg.is_important; await supabase.from("messages").update({is_important: newVal}).eq("id", selectedMsg.id); setMessages(prev=>prev.map(m=>m.id===selectedMsg.id ? {...m, is_important: newVal} : m)); setSelectedMsg(null); };
   const forwardMessage = async (toContact: Contact) => { if(!showForward || !currentUser || !supabase) return; await supabase.from("messages").insert([{from_number:currentUser.number, to_number:toContact.number, text:showForward.text, audio_url:showForward.audio_url, is_read:false}]); setShowForward(null); setSelectedMsg(null); loadMessages(); };
 
-  // AUDIO
   const getSupportedMime = () => { const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]; for(const t of types){ try{ if((MediaRecorder as any).isTypeSupported(t)) return t; }catch{} } return ""; };
   const blobToBase64 = (blob: Blob): Promise<string> => new Promise((res)=>{ const r=new FileReader(); r.onloadend=()=>res(r.result as string); r.readAsDataURL(blob); });
-  const startRecording = async () => { if(isRecording){ stopRecording(); return; } try{ const stream = await navigator.mediaDevices.getUserMedia({audio:true}); streamRef.current=stream; const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)(); const source = audioCtx.createMediaStreamSource(stream); const analyser = audioCtx.createAnalyser(); analyser.fftSize=128; source.connect(analyser); const updateWave = () => { const arr=new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(arr); const newWave=Array.from({length:20},(_,i)=>{ const v=arr[i*2]||0; return Math.max(4, Math.min(28, v/5)); }); setWave(newWave); animRef.current=requestAnimationFrame(updateWave); }; updateWave(); const mime = getSupportedMime(); const mr = mime ? new MediaRecorder(stream, {mimeType:mime}) : new MediaRecorder(stream); mediaRecorderRef.current=mr; chunksRef.current=[]; mr.ondataavailable=e=>{ if(e.data.size>0) chunksRef.current.push(e.data); }; mr.onstop=async ()=>{ cancelAnimationFrame(animRef.current); const blob = new Blob(chunksRef.current, {type: mr.mimeType || "audio/webm"}); if(blob.size < 800){ stream.getTracks().forEach(t=>t.stop()); return; } const base64 = await blobToBase64(blob); if(base64.length > 900000){ alert("Vocal trop long (max 20s)"); stream.getTracks().forEach(t=>t.stop()); return; } if(selected && currentUser && supabase){ await supabase.from("messages").insert([{from_number:currentUser.number, to_number:selected.number, text:"🎤", audio_url:base64, is_read:false}]); loadMessages(); } stream.getTracks().forEach(t=>t.stop()); audioCtx.close(); setWave(Array(20).fill(8)); }; mr.start(100); setIsRecording(true); setRecTime(0); timerRef.current=setInterval(()=>setRecTime(s=>s+1),1000); }catch{ alert("Micro bloqué"); } };
+  const startRecording = async () => { if(isRecording){ stopRecording(); return; } try{ const stream = await navigator.mediaDevices.getUserMedia({audio:true}); streamRef.current=stream; const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)(); const source = audioCtx.createMediaStreamSource(stream); const analyser = audioCtx.createAnalyser(); analyser.fftSize=128; source.connect(analyser); const updateWave = () => { const arr=new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(arr); const newWave=Array.from({length:20},(_,i)=>{ const v=arr[i*2]||0; return Math.max(4, Math.min(28, v/5)); }); setWave(newWave); animRef.current=requestAnimationFrame(updateWave); }; updateWave(); const mime = getSupportedMime(); const mr = mime ? new MediaRecorder(stream, {mimeType:mime}) : new MediaRecorder(stream); mediaRecorderRef.current=mr; chunksRef.current=[]; mr.ondataavailable=e=>{ if(e.data.size>0) chunksRef.current.push(e.data); }; mr.onstop=async ()=>{ cancelAnimationFrame(animRef.current); const blob = new Blob(chunksRef.current, {type: mr.mimeType || "audio/webm"}); if(blob.size < 800){ stream.getTracks().forEach(t=>t.stop()); return; } const base64 = await blobToBase64(blob); if(base64.length > 900000){ alert("Vocal trop long"); stream.getTracks().forEach(t=>t.stop()); return; } if(selected && currentUser && supabase){ await supabase.from("messages").insert([{from_number:currentUser.number, to_number:selected.number, text:"🎤", audio_url:base64, is_read:false}]); loadMessages(); } stream.getTracks().forEach(t=>t.stop()); audioCtx.close(); setWave(Array(20).fill(8)); }; mr.start(100); setIsRecording(true); setRecTime(0); timerRef.current=setInterval(()=>setRecTime(s=>s+1),1000); }catch{ alert("Micro bloqué"); } };
   const stopRecording = () => { if(mediaRecorderRef.current && isRecording){ mediaRecorderRef.current.stop(); setIsRecording(false); clearInterval(timerRef.current); cancelAnimationFrame(animRef.current); if(streamRef.current) streamRef.current.getTracks().forEach(t=>t.stop()); } };
   const cancelRecording = () => { if(mediaRecorderRef.current){ mediaRecorderRef.current.onstop=null; mediaRecorderRef.current.stop(); } setIsRecording(false); clearInterval(timerRef.current); cancelAnimationFrame(animRef.current); if(streamRef.current) streamRef.current.getTracks().forEach(t=>t.stop()); setWave(Array(20).fill(8)); };
 
@@ -111,9 +108,7 @@ export default function Page() {
             <span onClick={()=>createCall("vocal")} style={{fontSize:20, cursor:"pointer", padding:6}}>📞</span>
             <span onClick={()=>createCall("video")} style={{fontSize:20, cursor:"pointer", padding:6}}>📹</span>
           </div>
-
           {replyTo && <div style={{background:"#fff8c4", padding:"8px 12px", display:"flex", justifyContent:"space-between", borderLeft:"4px solid #008069"}}><div><b style={{fontSize:12, color:"#008069"}}>Réponse à</b><div style={{fontSize:13}}>{replyTo.text?.slice(0,50) || "🎤 Vocal"}</div></div><span onClick={()=>setReplyTo(null)} style={{cursor:"pointer"}}>✕</span></div>}
-
           <div style={{flex:1, padding:12, overflowY:"auto", display:"flex", flexDirection:"column", gap:8}}>
             {chatMessages.map(m=>{
               const isMe = normalize(m.from_number)===normalize(currentUser.number);
@@ -121,13 +116,7 @@ export default function Page() {
               return (
                 <div key={m.id} style={{alignSelf:isMe?"flex-end":"flex-start", background:isMe?"#d9fdd3":"white", padding:"8px 8px 8px 12px", borderRadius:isMe?"8px 0 8px 8px":"0 8px 8px 8px", maxWidth:"85%", boxShadow:"0 1px 0.5px rgba(0,0,0,0.13)", display:"flex", alignItems:"flex-start", gap:6, borderLeft: m.is_important ? "4px solid #FFC107" : "none"}}>
                   <div style={{flex:1}}>
-                    {m.audio_url ? (
-                      <div style={{display:"flex", alignItems:"center", gap:8, minWidth:200}}>
-                        <audio controls preload="metadata" playsInline style={{width:180, height:36}} src={m.audio_url} />
-                      </div>
-                    ) : (
-                      <span style={{fontSize:15, color:"#111b21", whiteSpace:"pre-wrap"}}>{m.text}</span>
-                    )}
+                    {m.audio_url ? <div style={{display:"flex", alignItems:"center", gap:8, minWidth:200}}><audio controls preload="metadata" playsInline style={{width:180, height:36}} src={m.audio_url} /></div> : <span style={{fontSize:15, color:"#111b21", whiteSpace:"pre-wrap"}}>{m.text}</span>}
                     <div style={{fontSize:10, color: isMe && isRead ? "#53bdeb" : "#667781", textAlign:"right", marginTop:4, fontWeight: isMe && isRead ? 800 : 400}}>{new Date(m.created_at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})} {isMe && <span style={{color: isRead ? "#53bdeb" : "#667781"}}>{isRead ? "✓✓" : "✓✓"}</span>} {m.is_important ? "⭐" : ""}</div>
                   </div>
                   <span onClick={()=>setSelectedMsg(m)} style={{cursor:"pointer", padding:"2px 6px", fontSize:18, color:"#667781", background:"#00000008", borderRadius:8}}>⋮</span>
@@ -136,38 +125,26 @@ export default function Page() {
             })}
             <div ref={endRef}/>
           </div>
-
           {isRecording ? (
             <div style={{height:62, background:"white", display:"flex", alignItems:"center", padding:"0 12px", gap:10, borderTop:"1px solid #e9edef"}}>
               <button onClick={cancelRecording} style={{width:40, height:40, borderRadius:"50%", background:"#f0f2f5", border:"none", fontSize:18}}>🗑️</button>
-              <div style={{display:"flex", alignItems:"center", gap:2, flex:1}}>
-                <span style={{width:10, height:10, background:"#f44336", borderRadius:"50%"}}></span>
-                <span style={{fontSize:14, color:"#f44336", fontWeight:700, marginLeft:6}}>{String(Math.floor(recTime/60)).padStart(2,"0")}:{String(recTime%60).padStart(2,"0")}</span>
-                <div style={{display:"flex", alignItems:"center", gap:2, marginLeft:12, flex:1}}>{wave.map((h,i)=>(<div key={i} style={{width:3, height:`${h}px`, background: h>15 ? "#008069" : "#25D366", borderRadius:2}}/>))}</div>
-              </div>
+              <div style={{display:"flex", alignItems:"center", gap:2, flex:1}}><span style={{width:10, height:10, background:"#f44336", borderRadius:"50%"}}></span><span style={{fontSize:14, color:"#f44336", fontWeight:700, marginLeft:6}}>{String(Math.floor(recTime/60)).padStart(2,"0")}:{String(recTime%60).padStart(2,"0")}</span><div style={{display:"flex", alignItems:"center", gap:2, marginLeft:12, flex:1}}>{wave.map((h,i)=>(<div key={i} style={{width:3, height:`${h}px`, background: h>15 ? "#008069" : "#25D366", borderRadius:2}}/>))}</div></div>
               <button onClick={stopRecording} style={{width:50, height:50, borderRadius:"50%", background:"#008069", color:"white", border:"none", fontSize:20}}>▶</button>
             </div>
           ) : (
             <div style={{minHeight:62, background:"white", display:"flex", alignItems:"center", padding:"6px 8px", gap:8, borderTop:"1px solid #e9edef"}}>
-              <div style={{flex:1, background:"#f0f2f5", borderRadius:24, display:"flex", alignItems:"center", padding:"0 12px", minHeight:46}}>
-                <input value={inputText} onChange={e=>setInputText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendText()} placeholder="Message" style={{flex:1, border:"none", outline:"none", fontSize:16, background:"transparent", padding:"10px 0", color:"#111b21"}}/>
-              </div>
-              {inputText.trim() ? (
-                <button onClick={sendText} style={{width:48, height:48, borderRadius:"50%", background:"#008069", color:"white", border:"none", fontSize:20}}>➤</button>
-              ) : (
-                <button onClick={startRecording} style={{width:48, height:48, borderRadius:"50%", background:"#008069", color:"white", border:"none", fontSize:20}}>🎤</button>
-              )}
+              <div style={{flex:1, background:"#f0f2f5", borderRadius:24, display:"flex", alignItems:"center", padding:"0 12px", minHeight:46}}><input value={inputText} onChange={e=>setInputText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendText()} placeholder="Message" style={{flex:1, border:"none", outline:"none", fontSize:16, background:"transparent", padding:"10px 0", color:"#111b21"}}/></div>
+              {inputText.trim() ? <button onClick={sendText} style={{width:48, height:48, borderRadius:"50%", background:"#008069", color:"white", border:"none", fontSize:20}}>➤</button> : <button onClick={startRecording} style={{width:48, height:48, borderRadius:"50%", background:"#008069", color:"white", border:"none", fontSize:20}}>🎤</button>}
             </div>
           )}
         </div>
       )}
 
-      {/* MENU EXACT COMME TA CAPTURE - WHATSAPP WEB */}
       {selectedMsg && (
         <div style={{position:"fixed", inset:0, background:"transparent", zIndex:300}} onClick={()=>setSelectedMsg(null)}>
           <div onClick={e=>e.stopPropagation()} style={{position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", background:"white", borderRadius:12, width:280, boxShadow:"0 8px 24px rgba(0,0,0,0.25)", overflow:"hidden", border:"1px solid #e9edef"}}>
             <div style={{padding:"8px 0"}}>
-              <div onClick={()=>{ alert(`Infos du message\n\nDe: ${selectedMsg.from_number}\nÀ: ${selectedMsg.to_number}\nHeure: ${new Date(selectedMsg.created_at).toLocaleString()}\nLu: ${selectedMsg.is_read ? "Oui - ✓✓ bleu" : "Non - ✓✓ gris"}\nImportant: ${selectedMsg.is_important ? "Oui ⭐" : "Non"}`); }} style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:16, cursor:"pointer", hover:{background:"#f5f6f6"}}}>
+              <div onClick={()=>{ alert(`Infos du message\n\nDe: ${selectedMsg.from_number}\nA: ${selectedMsg.to_number}\nHeure: ${new Date(selectedMsg.created_at).toLocaleString()}\nLu: ${selectedMsg.is_read ? "Oui - bleu" : "Non - gris"}\nImportant: ${selectedMsg.is_important ? "Oui" : "Non"}`); setSelectedMsg(null); }} style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:16, cursor:"pointer"}}>
                 <span style={{width:20, textAlign:"center", color:"#667781"}}>ⓘ</span><span style={{fontSize:14, color:"#111b21"}}>Infos du message</span>
               </div>
               <div onClick={()=>{ setReplyTo(selectedMsg); setSelectedMsg(null); }} style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:16, cursor:"pointer"}}>
@@ -176,9 +153,11 @@ export default function Page() {
               <div onClick={()=>{ setShowReaction(selectedMsg); setSelectedMsg(null); }} style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:16, cursor:"pointer"}}>
                 <span style={{width:20, textAlign:"center", color:"#667781"}}>☺</span><span style={{fontSize:14, color:"#111b21"}}>Réagir</span>
               </div>
-              <div onClick={downloadAudio} style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:16, cursor:"pointer", display: selectedMsg.audio_url ? "flex" : "none"}}>
-                <span style={{width:20, textAlign:"center", color:"#667781"}}>⬇</span><span style={{fontSize:14, color:"#111b21"}}>Télécharger</span>
-              </div>
+              {selectedMsg.audio_url && (
+                <div onClick={downloadAudio} style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:16, cursor:"pointer"}}>
+                  <span style={{width:20, textAlign:"center", color:"#667781"}}>⬇</span><span style={{fontSize:14, color:"#111b21"}}>Télécharger</span>
+                </div>
+              )}
               <div onClick={()=>{ setShowForward(selectedMsg); setSelectedMsg(null); }} style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:16, cursor:"pointer"}}>
                 <span style={{width:20, textAlign:"center", color:"#667781"}}>↗</span><span style={{fontSize:14, color:"#111b21"}}>Transférer</span>
               </div>
@@ -195,13 +174,10 @@ export default function Page() {
         </div>
       )}
 
-      {/* REACTIONS EMOJI */}
       {showReaction && (
         <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:400}}>
           <div style={{background:"white", borderRadius:24, padding:12, display:"flex", gap:8, boxShadow:"0 8px 24px rgba(0,0,0,0.2)"}}>
-            {["❤️","😂","😮","😢","🙏","👍"].map(emoji=>(
-              <span key={emoji} onClick={()=>{ alert(`Tu as réagi ${emoji} à: ${showReaction.text.slice(0,20)}`); setShowReaction(null); }} style={{fontSize:28, cursor:"pointer", padding:6}}>{emoji}</span>
-            ))}
+            {["❤️","😂","😮","😢","🙏","👍"].map(emoji=>(<span key={emoji} onClick={()=>{ alert(`Tu as réagi ${emoji}`); setShowReaction(null); }} style={{fontSize:28, cursor:"pointer", padding:6}}>{emoji}</span>))}
             <span onClick={()=>setShowReaction(null)} style={{fontSize:20, padding:6, cursor:"pointer"}}>✕</span>
           </div>
         </div>
